@@ -1,113 +1,179 @@
-import browser from "webextension-polyfill"
+import browser from "webextension-polyfill";
 
-let currentTabId: number | null = null
-let startTime = Date.now()
-let isIdle = false // ✅ NEW: Idle state
+let currentTabId: number | null = null;
+let startTime = Date.now();
+let isIdle = false;
+
+let lastActivityTime = Date.now();
+const idleThreshold = 60 * 1000; // 1 min
+
+function updateActivityTime() {
+  lastActivityTime = Date.now();
+  if (isIdle) {
+    isIdle = false;
+    console.log("[Idle] User is active again");
+  }
+}
+
+function onActivity() {
+  if (isIdle) {
+    isIdle = false;
+    console.log("[Idle] User is now active");
+  }
+  lastActivityTime = Date.now();
+}
+
+function checkIdleFallback() {
+  const now = Date.now();
+  if (!isIdle && now - lastActivityTime > idleThreshold) {
+    isIdle = true;
+    console.log("[Idle] User is now idle (manual fallback)");
+  }
+}
+
+// Fallback: Start manual idle checking for Firefox
+setInterval(checkIdleFallback, 5000);
+
+// Handle content script messages for manual idle detection
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === "user-activity") {
+    updateActivityTime();
+  }
+});
 
 interface ChangeInfo {
-  url?: string
-  [key: string]: any
+  url?: string;
+  [key: string]: any;
 }
 
 interface Tab {
-  id?: number
-  url?: string
-  [key: string]: any
+  id?: number;
+  url?: string;
+  [key: string]: any;
 }
 
 interface TabActiveInfo {
-  tabId: number
-  windowId: number
+  tabId: number;
+  windowId: number;
 }
 
 interface DebugUsageMessage {
-  type: "debug:usage"
+  type: "debug:usage";
 }
 
-// 🔧 Helper to extract domain
 function getDomain(url: string): string | null {
   try {
-    return new URL(url).hostname
+    return new URL(url).hostname;
   } catch {
-    return null
+    return null;
   }
 }
 
 function normalizeDomain(domain: string) {
-  return domain.replace(/^www\./, "")
+  return domain.replace(/^www\./, "");
 }
 
-// ✅ NEW: Track time spent (if not idle)
 async function trackTimeSpent(tabId: number | null, start: number) {
-  if (tabId === null || isIdle) return // ✅ Ignore if idle
+  if (tabId === null || isIdle) return;
 
   try {
-    const tab = await browser.tabs.get(tabId)
-    if (!tab.url) return
+    const tabs = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    const tab = tabs[0];
 
-    const rawDomain = getDomain(tab.url)
-    if (!rawDomain) return
-    const domain = normalizeDomain(rawDomain)
+    // Tab may not exist or URL may be undefined or browser-specific
+    if (
+      !tab ||
+      !tab.url ||
+      tab.url.startsWith("about:") ||
+      tab.url.startsWith("chrome:") ||
+      tab.url.startsWith("moz-extension:")
+    ) {
+      console.warn("Tab not found or no valid URL:", tab);
+      return;
+    }
 
-    const { allowedDomains = [] } = await browser.storage.local.get("allowedDomains")
-    if (!allowedDomains.includes(domain)) return
+    const rawDomain = getDomain(tab.url);
+    if (!rawDomain) return;
 
-    const res = await browser.storage.local.get(domain)
-    const total = res[domain] || 0
+    const domain = normalizeDomain(rawDomain);
+    const { allowedDomains = [] } = await browser.storage.local.get(
+      "allowedDomains"
+    );
+    if (!allowedDomains.includes(domain)) return;
 
-    await browser.storage.local.set({ [domain]: total + (Date.now() - start) })
+    const res = await browser.storage.local.get(domain);
+    const total = res[domain] || 0;
+
+    await browser.storage.local.set({ [domain]: total + (Date.now() - start) });
   } catch (err) {
-    console.error("Error tracking time:", err)
+    console.error("Error tracking time:", err);
   }
 }
 
-// ✅ NEW: Idle detection
-browser.idle.setDetectionInterval(60)
-browser.idle.onStateChanged.addListener((state) => {
-  isIdle = state !== "active"
-})
+// ✅ Chrome idle support
+if (browser.idle?.setDetectionInterval) {
+  browser.idle.setDetectionInterval(60);
+  browser.idle.onStateChanged.addListener((state) => {
+    isIdle = state !== "active";
+    console.log("[Idle API] State changed:", state);
+  });
+}
 
-// 🟡 When tab is activated
+// 🟡 Tab switched
 browser.tabs.onActivated.addListener(async (activeInfo: TabActiveInfo) => {
-  await trackTimeSpent(currentTabId, startTime)
+  if (isIdle) {
+    isIdle = false;
+    console.log("[Idle] User is now active from tab switch");
+  }
 
-  currentTabId = activeInfo.tabId
-  startTime = Date.now()
-})
+  await trackTimeSpent(currentTabId, startTime);
+  currentTabId = activeInfo.tabId;
+  startTime = Date.now();
+});
 
-// 🟡 When URL changes within same tab
+// 🟡 URL updated
 browser.tabs.onUpdated.addListener((tabId: number, changeInfo: ChangeInfo) => {
   if (tabId === currentTabId && changeInfo.url) {
-    startTime = Date.now()
+    if (isIdle) {
+      isIdle = false;
+      console.log("[Idle] User is now active from URL update");
+    }
+    startTime = Date.now();
   }
-})
+});
 
-// 🟡 Dev debug message handler
-browser.runtime.onMessage.addListener(async (msg: DebugUsageMessage | string) => {
-  if (msg === "debug:usage") {
-    const data: Record<string, unknown> = await browser.storage.local.get(null)
-    console.log("Storage dump:", data)
+// 🟡 Debug message
+browser.runtime.onMessage.addListener(
+  async (msg: DebugUsageMessage | string) => {
+    if (msg === "debug:usage") {
+      const data: Record<string, unknown> = await browser.storage.local.get(
+        null
+      );
+      console.log("Storage dump:", data);
+    }
   }
-})
+);
 
-// 🟡 Reset tracking on startup
+// 🟡 On startup
 browser.runtime.onStartup.addListener(() => {
-  currentTabId = null
-  startTime = Date.now()
-})
+  currentTabId = null;
+  startTime = Date.now();
+});
 
-// ✅ NEW: Auto sync to server every 5 mins
+// ✅ Sync data every 5 minutes
 setInterval(async () => {
-  const { allowedDomains = [] } = await browser.storage.local.get("allowedDomains")
-  const allData = await browser.storage.local.get(null)
+  const { allowedDomains = [] } = await browser.storage.local.get(
+    "allowedDomains"
+  );
+  const allData = await browser.storage.local.get(null);
 
-  console.log("Syncing usage data:", allData)
-
-  const usageData: Record<string, number> = {}
-
+  const usageData: Record<string, number> = {};
   for (const domain of allowedDomains) {
     if (allData[domain]) {
-      usageData[domain] = allData[domain]
+      usageData[domain] = allData[domain];
     }
   }
 
@@ -119,13 +185,11 @@ setInterval(async () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // Replace this with real token logic
-          Authorization: `Bearer ${process.env.ACCESS_TOKEN || "your-access-token-here"}`, 
+          Authorization: `Bearer ${process.env.ACCESS_TOKEN || "your-access-token-here"}`,
         },
         body: JSON.stringify({ usage: usageData }),
       })
 
-      // ✅ Reset stored time for synced domains
       for (const domain of Object.keys(usageData)) {
         await browser.storage.local.set({ [domain]: 0 })
       }
@@ -134,10 +198,10 @@ setInterval(async () => {
     }
   }
    */
-}, 5 * 60 * 1000) // Every 5 minutes
+}, 5 * 60 * 1000);
 
-console.log("Plasmo background service worker running")
+console.log("Plasmo background service worker running");
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("Extension installed.")
-})
+  console.log("Extension installed.");
+});

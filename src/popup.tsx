@@ -9,7 +9,9 @@ function formatMs(ms: number) {
 export default function Popup() {
   const [usage, setUsage] = useState<{ [domain: string]: number }>({})
 
+
   useEffect(() => {
+    console.log('working as expected')
     const win = window as Window & { chrome?: any }
 
     if (typeof window !== "undefined" && win.chrome && win.chrome.storage) {

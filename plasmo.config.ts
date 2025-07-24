@@ -9,8 +9,14 @@ const manifest = {
   background: {
     service_worker: "background.ts"
   },
+  contentScripts: [
+    {
+      matches: ["<all_urls>"],
+      js: ["src/debug.ts","src/content.ts","browser-polyfill.min.js"],
+      run_at: "document_start"
+    }
+  ],
   action: {
-    default_popup: "popup.html",
     default_icon: "assets/icon.png"
   },
   icons: {
