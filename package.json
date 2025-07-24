@@ -1,0 +1,28 @@
+{
+  "name": "carbons-scope-extension",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start":"npx plasmo dev --target=firefox",
+    "chrome":"npx plasmo dev --target=chrome",
+    "build":"npx plasmo build --target=firefox",
+    "build-chrome":"npx plasmo build --target=chrome",
+    "build-all":"npx plasmo build --target=firefox && npx plasmo build --target=chrome",
+    "test":"npx plasmo test --target=firefox",
+    "test-chrome":"npx plasmo test --target=chrome",
+    "test-all":"npx plasmo test --target=firefox && npx plasmo test --target=chrome"
+  },
+  "plasmo": {
+  "icons": false
+},
+  "dependencies": {
+    "webextension-polyfill": "^0.8.0",
+    "webextension-polyfill-ts": "^0.8.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "keywords": ["time tracking", "productivity", "browser extension"],
+  "author": "Naboth Daniel",
+  "license": "ISC",
+  "description": ""
+}
